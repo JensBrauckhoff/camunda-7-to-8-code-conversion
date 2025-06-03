@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.openrewrite.java.JavaParser;
 import org.openrewrite.test.RecipeSpec;
 import org.openrewrite.test.RewriteTest;
+import org.openrewrite.test.TypeValidation;
 
 import static org.openrewrite.java.Assertions.java;
 
@@ -13,8 +14,9 @@ class JavaDelegateSpringToZeebeWorkerSpringTest implements RewriteTest {
     @Override
     public void defaults(RecipeSpec spec) {
         spec.recipe(new JavaDelegateSpringToZeebeWorkerSpring())
-        	.parser(JavaParser.fromJavaVersion()
-    			.classpath(JavaParser.runtimeClasspath()));
+                .parser(JavaParser.fromJavaVersion()
+                        .classpath(JavaParser.runtimeClasspath()))
+                .typeValidationOptions(TypeValidation.none());
     }
     
 
@@ -58,8 +60,9 @@ public class RetrievePaymentAdapter {
         );
     }    
     
-    //@Test
+    @Test
     void rewriteExecurteMethodWithVariables() {
+        // The import for the DelegateExecution should disappear ... yet I failed to achive this so far
         rewriteRun(
             java(
                 """
@@ -79,12 +82,14 @@ public class RetrievePaymentAdapter implements JavaDelegate {
   private RestTemplate rest;
 
   @Override
-  public void execute(DelegateExecution ctx) throws Exception {    
+  public void execute(DelegateExecution ctx) throws Exception {
     Integer amount = (Integer) ctx.getVariable("AMOUNT");
+    String text = (String) ctx.getVariableLocal("TEXT");
     
     String response = rest.postForObject("endpoint", amount, String.class);
     
     ctx.setVariable("paymentTransactionId", response);
+    ctx.setVariableLocal("paymentTransactionComment", response + "_COMMENT");
   }
 
 }
@@ -93,7 +98,8 @@ public class RetrievePaymentAdapter implements JavaDelegate {
 package org.camunda.community.migration.example;
 
 import io.camunda.zeebe.client.api.response.ActivatedJob;
-import io.camunda.zeebe.client.api.worker.JobWorker;
+import io.camunda.zeebe.spring.client.annotation.JobWorker;
+import org.camunda.bpm.engine.delegate.DelegateExecution;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
@@ -111,11 +117,13 @@ public class RetrievePaymentAdapter {
     @JobWorker(type = "retrievePaymentAdapter", autoComplete = true)
     public Map<String,Object> execute(ActivatedJob ctx) throws Exception {
         Map<String, Object> resultMap = new HashMap<>();
-    Integer amount = (Integer) ctx.getVariablesAsMap().getVariable("AMOUNT");
+    Integer amount = (Integer) ctx.getVariable("AMOUNT");
+    String text = (String) ctx.getVariable("TEXT");
 
     String response = rest.postForObject("endpoint", amount, String.class);
 
-        resultMap.put("paymentTransactionId", response);
+      resultMap.put("paymentTransactionId", response);
+      resultMap.put("paymentTransactionComment", response + "_COMMENT");
         return resultMap;
   }
 
