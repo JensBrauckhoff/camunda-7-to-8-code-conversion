@@ -261,17 +261,38 @@ public class JavaDelegateSpringToZeebeWorkerSpring extends Recipe {
 						System.out.println("Transform " + methodInvocation);
 						return transformSetVariableCall(getCursor(), methodInvocation);
 					}
+
+					final String methodName = methodInvocation.getMethodType().getName();
+					final String newMethodName = switch (methodName) {
+						case "getProcessInstanceId" -> "getProcessInstanceKey ";
+						case "getProcessDefinitionId" -> "getProcessDefinitionKey ";
+						case "getCurrentActivityId" -> "getElementId ";
+						case "getActivityInstanceId" -> "getKey";
+						default -> methodName;
+					};
+					return execMethodTemplate.apply(
+							getCursor(),
+							methodInvocation.getCoordinates().replace(),
+							methodInvocation.getSelect(),
+							newMethodName
+					);
 				}
 				return methodInvocation;
 			}
+
+			private final JavaTemplate execMethodTemplate = JavaTemplate.builder("#{any(io.camunda.zeebe.client.api.response.ActivatedJob)}.#{}()")
+					.javaParser(JavaParser.fromJavaVersion().classpath(JavaParser.runtimeClasspath()))
+					.imports("io.camunda.zeebe.client.api.response.ActivatedJob")
+					.build();
 
             private boolean isGetVariableCall(@NotNull J.MethodInvocation methodInvocation) {
                 return methodInvocation.getSimpleName().equals("getVariable")
                         || methodInvocation.getSimpleName().equals("getVariableLocal");
             }
 
+			private static final String PACKAGE_NAME_Delegate = "org.camunda.bpm.engine.delegate";
 			private static final String CLASS_NAME_VariableScope = "VariableScope";
-			private static final String PACKAGE_NAME_VariableScope = "org.camunda.bpm.engine.delegate";
+			private static final String CLASS_NAME_DelegateExecution = "DelegateExecution";
 
             private boolean isSetVariableCall(@NotNull J.MethodInvocation methodInvocation) {
                 return methodInvocation.getSimpleName().equals("setVariable")
@@ -285,7 +306,11 @@ public class JavaDelegateSpringToZeebeWorkerSpring extends Recipe {
 				}
 				final String methodClassName = methodType.getDeclaringType().getClassName();
 				final String methodPackageName = methodType.getDeclaringType().getPackageName();
-				if (!methodClassName.equals(CLASS_NAME_VariableScope) || !methodPackageName.equals(PACKAGE_NAME_VariableScope)) {
+				if (!methodPackageName.equals(PACKAGE_NAME_Delegate)){
+					return false;
+				}
+				if (!methodClassName.equals(CLASS_NAME_VariableScope)
+						&& !methodClassName.equals(CLASS_NAME_DelegateExecution)) {
 					return false;
 				}
 

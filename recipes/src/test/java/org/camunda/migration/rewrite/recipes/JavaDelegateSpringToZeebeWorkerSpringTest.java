@@ -61,7 +61,7 @@ public class RetrievePaymentAdapter {
     }    
     
     @Test
-    void rewriteExecurteMethodWithVariables() {
+    void rewriteExecuteMethodWithVariables() {
         // The import for the DelegateExecution should disappear ... yet I failed to achive this so far
         rewriteRun(
             java(
@@ -129,6 +129,63 @@ public class RetrievePaymentAdapter {
 
 }"""                
             )
+        );
+    }
+
+    @Test
+    void rewriteExecuteMethodWithExecutionApi() {
+        // The import for the DelegateExecution should disappear ... yet I failed to achive this so far
+        rewriteRun(
+                java(
+                        """
+        package org.camunda.community.migration.example;
+        
+        import org.camunda.bpm.engine.delegate.DelegateExecution;
+        import org.camunda.bpm.engine.delegate.JavaDelegate;
+        import org.springframework.beans.factory.annotation.Autowired;
+        import org.springframework.boot.context.properties.ConfigurationProperties;
+        import org.springframework.stereotype.Component;
+        import org.springframework.web.client.RestTemplate;
+        
+        @Component
+        public class RetrievePaymentAdapter implements JavaDelegate {
+        
+          @Override
+          public void execute(DelegateExecution execution) throws Exception {
+              final String procInstanceId = execution.getProcessInstanceId();
+              final String procDefId = execution.getProcessDefinitionId();
+              final String curActId = execution.getCurrentActivityId();
+              final String actInstanceId = execution.getActivityInstanceId();
+          }
+        }""",
+                        """
+        package org.camunda.community.migration.example;
+        
+        import io.camunda.zeebe.client.api.response.ActivatedJob;
+        import io.camunda.zeebe.spring.client.annotation.JobWorker;
+        import org.camunda.bpm.engine.delegate.DelegateExecution;
+        import org.springframework.beans.factory.annotation.Autowired;
+        import org.springframework.boot.context.properties.ConfigurationProperties;
+        import org.springframework.stereotype.Component;
+        import org.springframework.web.client.RestTemplate;
+        
+        import java.util.HashMap;
+        import java.util.Map;
+        
+        @Component
+        public class RetrievePaymentAdapter {
+        
+            @JobWorker(type = "retrievePaymentAdapter", autoComplete = true)
+            public Map<String,Object> execute(ActivatedJob execution) throws Exception {
+                Map<String, Object> resultMap = new HashMap<>();
+              final Long procInstanceId = execution.getProcessInstanceKey();
+              final Long procDefId = execution.getProcessDefinitionKey();
+              final String curActId = execution.getElementId();
+              final Long actInstanceId = execution.getKey();
+                return resultMap;
+          }
+        }"""
+                )
         );
     }
 }
