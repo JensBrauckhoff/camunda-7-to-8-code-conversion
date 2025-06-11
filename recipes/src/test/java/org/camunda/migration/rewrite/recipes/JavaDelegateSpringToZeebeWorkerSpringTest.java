@@ -178,10 +178,10 @@ public class RetrievePaymentAdapter {
             @JobWorker(type = "retrievePaymentAdapter", autoComplete = true)
             public Map<String,Object> execute(ActivatedJob execution) throws Exception {
                 Map<String, Object> resultMap = new HashMap<>();
-              final Long procInstanceId = execution.getProcessInstanceKey();
-              final Long procDefId = execution.getProcessDefinitionKey();
+              final String procInstanceId = execution.getProcessInstanceKey().toString();
+              final String procDefId = execution.getProcessDefinitionKey().toString();
               final String curActId = execution.getElementId();
-              final Long actInstanceId = execution.getKey();
+              final String actInstanceId = execution.getKey().toString();
                 return resultMap;
           }
         }"""

@@ -18,6 +18,7 @@ import org.openrewrite.java.tree.J.ClassDeclaration;
 import org.openrewrite.java.tree.J.MethodDeclaration;
 import org.openrewrite.java.tree.J.MethodInvocation;
 import org.openrewrite.java.tree.JavaType.Method;
+import org.openrewrite.marker.Markers;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -264,26 +265,84 @@ public class JavaDelegateSpringToZeebeWorkerSpring extends Recipe {
 
 					final String methodName = methodInvocation.getMethodType().getName();
 					final String newMethodName = switch (methodName) {
-						case "getProcessInstanceId" -> "getProcessInstanceKey ";
-						case "getProcessDefinitionId" -> "getProcessDefinitionKey ";
-						case "getCurrentActivityId" -> "getElementId ";
+						case "getProcessInstanceId" -> "getProcessInstanceKey";
+						case "getProcessDefinitionId" -> "getProcessDefinitionKey";
+						case "getCurrentActivityId" -> "getElementId";
 						case "getActivityInstanceId" -> "getKey";
 						default -> methodName;
 					};
-					return execMethodTemplate.apply(
-							getCursor(),
+					final boolean convertToString = switch (methodName) {
+						case "getProcessInstanceId", "getProcessDefinitionId", "getActivityInstanceId" -> true;
+						default -> false;
+					};
+					if (methodName.equals(newMethodName)) {
+						return methodInvocation;
+					}
+					// TODO: tell the outer expression if the type has changed
+					// TODO: may with that -> https://docs.openrewrite.org/concepts-and-explanations/markers
+					Markers markers = methodInvocation.getMarkers();
+					final Cursor cursor = getCursor();
+					cursor.putMessageOnFirstEnclosing(J.VariableDeclarations.class, MESSAGE_TYPE_CHANGED, "long");
+					return convertToString ? execMethodToStringTemplate.apply(
+							cursor,
 							methodInvocation.getCoordinates().replace(),
 							methodInvocation.getSelect(),
-							newMethodName
-					);
+							newMethodName)
+							: execMethodTemplate.apply(
+							cursor,
+							methodInvocation.getCoordinates().replace(),
+							methodInvocation.getSelect(),
+							newMethodName);
 				}
 				return methodInvocation;
 			}
 
-			private final JavaTemplate execMethodTemplate = JavaTemplate.builder("#{any(io.camunda.zeebe.client.api.response.ActivatedJob)}.#{}()")
-					.javaParser(JavaParser.fromJavaVersion().classpath(JavaParser.runtimeClasspath()))
-					.imports("io.camunda.zeebe.client.api.response.ActivatedJob")
-					.build();
+			private static final String MESSAGE_TYPE_CHANGED = "MessageTypeChanged";
+			private final JavaTemplate execMethodTemplate =
+					JavaTemplate.builder("#{any(io.camunda.zeebe.client.api.response.ActivatedJob)}.#{}()")
+							.javaParser(JavaParser.fromJavaVersion().classpath(JavaParser.runtimeClasspath()))
+							.imports("io.camunda.zeebe.client.api.response.ActivatedJob")
+							.build();
+			private final JavaTemplate execMethodToStringTemplate =
+					JavaTemplate.builder("#{any(io.camunda.zeebe.client.api.response.ActivatedJob)}.#{}().toString()")
+							.javaParser(JavaParser.fromJavaVersion().classpath(JavaParser.runtimeClasspath()))
+							.imports("io.camunda.zeebe.client.api.response.ActivatedJob")
+							.build();
+
+			@Override
+			@NotNull
+			public J.VariableDeclarations visitVariableDeclarations(@NotNull J.VariableDeclarations multiVariable, @NotNull ExecutionContext ctx) {
+				J.VariableDeclarations variableDeclarations = super.visitVariableDeclarations(multiVariable, ctx);
+				final Cursor cursor = getCursor();
+				final Object message = cursor.getMessage(MESSAGE_TYPE_CHANGED);
+				// TODO: Ideen für einen Rewrite:
+				// https://docs.openrewrite.org/recipes/staticanalysis/multiplevariabledeclarations
+				// https://docs.openrewrite.org/recipes/java/migrate/lang/usevar
+				// https://docs.openrewrite.org/recipes/java/migrate/lang/var/usevarforobject
+				if (message != null) {
+					final var modifiers = multiVariable.getModifiers();
+					final var type = multiVariable.getType();
+					final var variables = multiVariable.getVariables();
+					multiVariable.getVariables().forEach(variable -> {
+						final var varName = variable.getName();
+						final var initializer = variable.getInitializer();
+/*
+						final var newDecl = variableCreationTemplate.apply(
+								cursor,
+								multiVariable.getCoordinates().replace(),
+								message.toString(), varName, initializer.toString() );
+						System.out.println(newDecl);
+ */
+					});
+				}
+
+				return variableDeclarations;
+			}
+
+			private final JavaTemplate variableCreationTemplate =
+					JavaTemplate.builder("#{any()} #{} = #{}")
+							.javaParser(JavaParser.fromJavaVersion().classpath(JavaParser.runtimeClasspath()))
+							.build();
 
             private boolean isGetVariableCall(@NotNull J.MethodInvocation methodInvocation) {
                 return methodInvocation.getSimpleName().equals("getVariable")
