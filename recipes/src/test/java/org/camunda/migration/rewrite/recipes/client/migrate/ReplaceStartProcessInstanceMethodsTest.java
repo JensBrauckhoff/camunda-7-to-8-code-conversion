@@ -2,8 +2,7 @@ package org.camunda.migration.rewrite.recipes.client.migrate;
 
 import static org.openrewrite.java.Assertions.java;
 
-import org.camunda.migration.rewrite.recipes.sharedRecipes.LogRecipe;
-import org.camunda.migration.rewrite.recipes.sharedRecipes.LogTypeRecipe;
+import org.camunda.migration.rewrite.recipes.client.MigrateStartProcessInstanceMethodsRecipe;
 import org.junit.jupiter.api.Test;
 import org.openrewrite.test.RewriteTest;
 
@@ -12,7 +11,7 @@ class ReplaceStartProcessInstanceMethodsTest implements RewriteTest {
   @Test
   void replaceStartProcessInstanceMethodsTest() {  // new line after packages vanishes...
     rewriteRun(
-        spec -> spec.recipe(new ReplaceStartProcessInstanceMethodsRecipe()),
+        spec -> spec.recipe(new MigrateStartProcessInstanceMethodsRecipe()),
         // language=java
         java(
             """
@@ -255,8 +254,8 @@ class ReplaceStartProcessInstanceMethodsTest implements RewriteTest {
                                                  .newCreateInstanceCommand()
                                                  .bpmnProcessId(processDefinitionKey)
                                                  .latestVersion()
-                                                 .tenantId(tenantId)
                                                  .variables(variableMap)
+                                                 .tenantId(tenantId)
                                                  .send()
                                                  .join();
 
@@ -265,8 +264,8 @@ class ReplaceStartProcessInstanceMethodsTest implements RewriteTest {
                                                  .newCreateInstanceCommand()
                                                  .bpmnProcessId(processDefinitionKey)
                                                  .latestVersion()
-                                                 .tenantId(tenantId)
                                                  .variables(variableMap)
+                                                 .tenantId(tenantId)
                                                  .send()
                                                  .join();
 
@@ -323,23 +322,7 @@ class ReplaceStartProcessInstanceMethodsTest implements RewriteTest {
                                          camundaClient
                                                  .newCreateInstanceCommand()
                                                  .processDefinitionKey(Long.valueOf(processDefinitionId))
-                                                 .tenantId(tenantId)
                                                  .variables(variableMap)
-                                                 .send()
-                                                 .join();
-
-                                         // businessKey was removed
-                                         camundaClient
-                                                 .newCreateInstanceCommand()
-                                                 .processDefinitionKey(Long.valueOf(processDefinitionId))
-                                                 .variables(variableMap)
-                                                 .send()
-                                                 .join();
-
-                                         // businessKey was removed
-                                         camundaClient
-                                                 .newCreateInstanceCommand()
-                                                 .processDefinitionKey(Long.valueOf(processDefinitionId))
                                                  .tenantId(tenantId)
                                                  .send()
                                                  .join();
@@ -348,8 +331,24 @@ class ReplaceStartProcessInstanceMethodsTest implements RewriteTest {
                                          camundaClient
                                                  .newCreateInstanceCommand()
                                                  .processDefinitionKey(Long.valueOf(processDefinitionId))
-                                                 .tenantId(tenantId)
                                                  .variables(variableMap)
+                                                 .send()
+                                                 .join();
+
+                                         // businessKey was removed
+                                         camundaClient
+                                                 .newCreateInstanceCommand()
+                                                 .processDefinitionKey(Long.valueOf(processDefinitionId))
+                                                 .tenantId(tenantId)
+                                                 .send()
+                                                 .join();
+
+                                         // businessKey was removed
+                                         camundaClient
+                                                 .newCreateInstanceCommand()
+                                                 .processDefinitionKey(Long.valueOf(processDefinitionId))
+                                                 .variables(variableMap)
+                                                 .tenantId(tenantId)
                                                  .send()
                                                  .join();
 
@@ -439,7 +438,7 @@ class ReplaceStartProcessInstanceMethodsTest implements RewriteTest {
   @Test
   void variousProcessEngineFunctionsTest() {
     rewriteRun(
-        spec -> spec.recipes(new ReplaceStartProcessInstanceMethodsRecipe(), new LogRecipe(), new LogTypeRecipe()),
+        spec -> spec.recipes(new MigrateStartProcessInstanceMethodsRecipe()),
         // language=java
         java(
             """

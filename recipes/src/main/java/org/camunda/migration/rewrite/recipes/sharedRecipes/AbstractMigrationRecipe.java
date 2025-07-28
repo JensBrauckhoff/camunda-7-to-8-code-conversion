@@ -1,9 +1,11 @@
 package org.camunda.migration.rewrite.recipes.sharedRecipes;
 
 import java.util.*;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.camunda.migration.rewrite.recipes.utils.RecipeUtils;
+import org.camunda.migration.rewrite.recipes.utils.ReplacementUtils;
 import org.openrewrite.*;
 import org.openrewrite.java.JavaIsoVisitor;
 import org.openrewrite.java.MethodMatcher;
@@ -26,29 +28,32 @@ public abstract class AbstractMigrationRecipe extends Recipe {
 
   protected abstract TreeVisitor<?, ExecutionContext> preconditions();
 
-  protected abstract List<RecipeUtils.MethodInvocationSimpleReplacementSpec>
-      simpleMethodInvocations();
+  protected Predicate<Cursor> visitorSkipCondition() {
+    return cursor -> false;
+  }
 
-  protected abstract List<RecipeUtils.MethodInvocationBuilderReplacementSpec>
-      builderMethodInvocations();
+  protected abstract List<ReplacementUtils.SimpleReplacementSpec> simpleMethodInvocations();
 
-  protected abstract List<RecipeUtils.MethodInvocationReturnReplacementSpec>
-      returnMethodInvocations();
+  protected abstract List<ReplacementUtils.BuilderReplacementSpec> builderMethodInvocations();
+
+  protected abstract List<ReplacementUtils.ReturnReplacementSpec> returnMethodInvocations();
+
+  protected abstract List<ReplacementUtils.RenameReplacementSpec> renameMethodInvocations();
 
   @Override
   public TreeVisitor<?, ExecutionContext> getVisitor() {
 
     return Preconditions.check(
         preconditions(),
-        new JavaIsoVisitor<ExecutionContext>() {
+        new JavaIsoVisitor<>() {
 
           // join specs - possible because we don't touch the method invocations
-          final List<RecipeUtils.MethodInvocationReplacementSpec> commonSpecs =
+          final List<ReplacementUtils.ReplacementSpec> commonSpecs =
               Stream.concat(
                       simpleMethodInvocations().stream()
-                          .map(spec -> (RecipeUtils.MethodInvocationReplacementSpec) spec),
+                          .map(spec -> (ReplacementUtils.ReplacementSpec) spec),
                       builderMethodInvocations().stream()
-                          .map(spec -> (RecipeUtils.MethodInvocationReplacementSpec) spec))
+                          .map(spec -> (ReplacementUtils.ReplacementSpec) spec))
                   .toList();
 
           /**
@@ -59,6 +64,11 @@ public abstract class AbstractMigrationRecipe extends Recipe {
           public J.VariableDeclarations visitVariableDeclarations(
               J.VariableDeclarations declarations, ExecutionContext ctx) {
 
+            // test to skip visitor
+            if (visitorSkipCondition().test(getCursor())) {
+              return declarations;
+            }
+
             // Analyze first variable
             J.VariableDeclarations.NamedVariable firstVar = declarations.getVariables().get(0);
             J.Identifier originalName = firstVar.getName();
@@ -68,17 +78,36 @@ public abstract class AbstractMigrationRecipe extends Recipe {
             if (originalInitializer instanceof J.MethodInvocation invocation) {
 
               // run through prepared migration rules
-              for (RecipeUtils.MethodInvocationReplacementSpec spec : commonSpecs) {
+              for (ReplacementUtils.ReplacementSpec spec : commonSpecs) {
 
                 // if match is found for the invocation, check returnTypeFqn to adjust variable
                 // declaration type
                 if (spec.matcher().matches(invocation)) {
+
+                  // nothing to do if type stays the same
+                  if (spec.returnTypeStrategy()
+                      == ReplacementUtils.ReturnTypeStrategy.INFER_FROM_CONTEXT) {
+                    return super.visitVariableDeclarations(declarations, ctx);
+                  }
+
+                  String resolvedFqn = null;
+                  switch (spec.returnTypeStrategy()) {
+                    case USE_SPECIFIED_TYPE -> resolvedFqn = spec.returnTypeFqn();
+                    case VOID ->
+                        throw new IllegalStateException(
+                            "Should not visit declarations for void strategy.");
+                  }
 
                   // get modifiers
                   List<J.Modifier> modifiers = declarations.getModifiers();
 
                   // Create simple java template to adjust variable declaration type, but keep
                   // invocation as is
+                  assert resolvedFqn != null;
+
+                  String shortName = RecipeUtils.getShortName(resolvedFqn);
+                  String genericLongName = RecipeUtils.getGenericLongName(resolvedFqn);
+
                   J.VariableDeclarations modifiedDeclarations =
                       RecipeUtils.createSimpleJavaTemplate(
                               (modifiers == null || modifiers.isEmpty()
@@ -86,15 +115,14 @@ public abstract class AbstractMigrationRecipe extends Recipe {
                                       : modifiers.stream()
                                           .map(J.Modifier::toString)
                                           .collect(Collectors.joining(" ", "", " ")))
-                                  + spec.returnTypeFqn()
-                                      .substring(spec.returnTypeFqn().lastIndexOf('.') + 1)
+                                  + shortName
                                   + " "
                                   + originalName.getSimpleName()
-                                  + " = #{any()}",
-                              spec.returnTypeFqn())
+                                  + " = #{any(java.lang.Object)}",
+                              genericLongName)
                           .apply(getCursor(), declarations.getCoordinates().replace(), invocation);
 
-                  maybeAddImport(spec.returnTypeFqn());
+                  maybeAddImport(genericLongName);
 
                   // ensure comments are added here, not on method invocation
                   getCursor().putMessage(invocation.getId().toString(), "comments added");
@@ -102,7 +130,7 @@ public abstract class AbstractMigrationRecipe extends Recipe {
                   // record fqn of identifier for later uses
                   getCursor()
                       .dropParentUntil(parent -> parent instanceof J.Block)
-                      .putMessage(originalName.toString(), spec.returnTypeFqn());
+                      .putMessage(originalName.toString(), resolvedFqn);
 
                   // merge comments
                   modifiedDeclarations =
@@ -118,10 +146,45 @@ public abstract class AbstractMigrationRecipe extends Recipe {
                   // visit method invocations
                   modifiedDeclarations = super.visitVariableDeclarations(modifiedDeclarations, ctx);
 
-                  maybeRemoveImport(declarations.getTypeAsFullyQualified());
+                  maybeRemoveImport(
+                      RecipeUtils.getGenericLongName(
+                          declarations.getTypeAsFullyQualified().toString()));
 
                   return maybeAutoFormat(declarations, modifiedDeclarations, ctx);
                 }
+              }
+
+              // transform access to lists
+              if (invocation.getSelect() instanceof J.Identifier ident
+                  && invocation.getSimpleName().equals("get")
+                  && getCursor().getNearestMessage(ident.getSimpleName()) != null) {
+
+                String listMessage = getCursor().getNearestMessage(ident.getSimpleName());
+
+                String shortName = RecipeUtils.getGenericShortName(listMessage);
+                String longName = RecipeUtils.getGenericLongName(listMessage);
+
+                J.VariableDeclarations modifiedDeclarations =
+                    RecipeUtils.createSimpleJavaTemplate(
+                            shortName + " " + originalName.getSimpleName() + " = #{any()}",
+                            longName)
+                        .apply(
+                            getCursor(),
+                            declarations.getCoordinates().replace(),
+                            originalInitializer);
+
+                maybeAddImport(longName);
+
+                // record fqn of identifier for later uses
+                getCursor()
+                    .dropParentUntil(parent -> parent instanceof J.Block)
+                    .putMessage(
+                        originalName.getSimpleName(), RecipeUtils.getGenericLongName(listMessage));
+
+                // visit method invocations
+                modifiedDeclarations = super.visitVariableDeclarations(modifiedDeclarations, ctx);
+
+                return maybeAutoFormat(declarations, modifiedDeclarations, ctx);
               }
             }
 
@@ -130,17 +193,97 @@ public abstract class AbstractMigrationRecipe extends Recipe {
             return super.visitVariableDeclarations(declarations, ctx);
           }
 
-          final List<RecipeUtils.MethodInvocationSimpleReplacementSpec> simpleMethodInvocations =
+          /** Replace initializers of assignments */
+          @Override
+          public J.Assignment visitAssignment(J.Assignment assignment, ExecutionContext ctx) {
+
+            // test to skip visitor
+            if (visitorSkipCondition().test(getCursor())) {
+              return assignment;
+            }
+
+            if (!(assignment.getVariable() instanceof J.Identifier originalName)) {
+              return super.visitAssignment(assignment, ctx);
+            }
+
+            if (!(assignment.getAssignment() instanceof J.MethodInvocation invocation)) {
+              return super.visitAssignment(assignment, ctx);
+            }
+
+            // run through prepared migration rules
+            for (ReplacementUtils.ReplacementSpec spec : commonSpecs) {
+
+              // if match is found for the invocation, check returnTypeFqn to adjust variable
+              // declaration type
+              if (spec.matcher().matches(invocation)) {
+
+                // nothing to do if type stays the same
+                if (spec.returnTypeStrategy()
+                    == ReplacementUtils.ReturnTypeStrategy.INFER_FROM_CONTEXT) {
+                  return super.visitAssignment(assignment, ctx);
+                }
+
+                String resolvedFqn = null;
+                switch (spec.returnTypeStrategy()) {
+                  case USE_SPECIFIED_TYPE -> resolvedFqn = spec.returnTypeFqn();
+                  case VOID ->
+                      throw new IllegalStateException(
+                          "Should not visit assignment for void strategy.");
+                }
+
+                // Create simple java template to adjust variable declaration type, but keep
+                // invocation as is
+                J.Assignment modifiedAssignment =
+                    RecipeUtils.createSimpleJavaTemplate(
+                            originalName.getSimpleName() + " = #{any()}", resolvedFqn)
+                        .apply(getCursor(), assignment.getCoordinates().replace(), invocation);
+
+                assert resolvedFqn != null;
+                modifiedAssignment =
+                    modifiedAssignment.withVariable(
+                        modifiedAssignment.getVariable().withType(JavaType.buildType(resolvedFqn)));
+                modifiedAssignment = modifiedAssignment.withType(JavaType.buildType(resolvedFqn));
+
+                maybeAddImport(resolvedFqn);
+
+                // ensure comments are added here, not on method invocation
+                getCursor().putMessage(invocation.getId().toString(), "comments added");
+
+                // record fqn of identifier for later uses
+                getCursor()
+                    .dropParentUntil(parent -> parent instanceof J.Block)
+                    .putMessage(originalName.toString(), resolvedFqn);
+
+                // merge comments
+                modifiedAssignment =
+                    modifiedAssignment.withComments(
+                        Stream.concat(
+                                assignment.getComments().stream(),
+                                spec.textComments().stream()
+                                    .map(text -> RecipeUtils.createSimpleComment(assignment, text)))
+                            .toList());
+
+                // visit method invocations
+                modifiedAssignment = (J.Assignment) super.visitAssignment(modifiedAssignment, ctx);
+
+                if (originalName.getType() instanceof JavaType.FullyQualified fqn) {
+                  maybeRemoveImport(fqn);
+                }
+
+                return maybeAutoFormat(assignment, modifiedAssignment, ctx);
+              }
+            }
+            return super.visitAssignment(assignment, ctx);
+          }
+
+          final List<ReplacementUtils.SimpleReplacementSpec> simpleMethodInvocations =
               simpleMethodInvocations();
 
-          final Map<MethodMatcher, List<RecipeUtils.MethodInvocationBuilderReplacementSpec>>
-              builderSpecMap =
-                  builderMethodInvocations().stream()
-                      .collect(
-                          Collectors.groupingBy(
-                              RecipeUtils.MethodInvocationBuilderReplacementSpec::matcher));
+          final Map<MethodMatcher, List<ReplacementUtils.BuilderReplacementSpec>> builderSpecMap =
+              builderMethodInvocations().stream()
+                  .collect(Collectors.groupingBy(ReplacementUtils.BuilderReplacementSpec::matcher));
 
-          final List<RecipeUtils.MethodInvocationReturnReplacementSpec> returnMethodInvocations =
+          final List<ReplacementUtils.ReturnReplacementSpec> returnMethodInvocations =
               returnMethodInvocations();
 
           /** Method invocations are visited and replaced */
@@ -148,28 +291,39 @@ public abstract class AbstractMigrationRecipe extends Recipe {
           public J.MethodInvocation visitMethodInvocation(
               J.MethodInvocation invocation, ExecutionContext ctx) {
 
+            // test to skip visitor
+            if (visitorSkipCondition().test(getCursor())) {
+              return invocation;
+            }
+
             // visit simple method invocations
-            for (RecipeUtils.MethodInvocationSimpleReplacementSpec spec : simpleMethodInvocations) {
+            for (ReplacementUtils.SimpleReplacementSpec spec : simpleMethodInvocations) {
+
               if (spec.matcher().matches(invocation)) {
 
-                return maybeAutoFormat(
-                    invocation,
+                spec.maybeRemoveImports().forEach(this::maybeRemoveImport);
+                spec.maybeAddImports().forEach(this::maybeAddImport);
+
+                J.MethodInvocation modifiedInvocation =
                     (J.MethodInvocation)
                         RecipeUtils.applyTemplate(
                             spec.template(),
                             invocation,
                             getCursor(),
-                            RecipeUtils.createArgs(invocation, spec.argumentIndexes()),
+                            ReplacementUtils.createArgs(
+                                invocation, spec.baseIdentifier(), spec.argumentIndexes()),
                             getCursor().getNearestMessage(invocation.getId().toString()) != null
                                 ? Collections.emptyList()
-                                : spec.textComments()),
-                    ctx);
+                                : spec.textComments());
+
+                return maybeAutoFormat(
+                    invocation, super.visitMethodInvocation(modifiedInvocation, ctx), ctx);
               }
             }
 
             // loop through builder pattern groups
-            for (Map.Entry<MethodMatcher, List<RecipeUtils.MethodInvocationBuilderReplacementSpec>>
-                entry : builderSpecMap.entrySet()) {
+            for (Map.Entry<MethodMatcher, List<ReplacementUtils.BuilderReplacementSpec>> entry :
+                builderSpecMap.entrySet()) {
               MethodMatcher matcher = entry.getKey();
               if (matcher.matches(invocation)) {
                 Map<String, Expression> collectedArgs = new HashMap<>();
@@ -186,10 +340,15 @@ public abstract class AbstractMigrationRecipe extends Recipe {
                 }
 
                 // loop through pattern options
-                for (RecipeUtils.MethodInvocationBuilderReplacementSpec spec : entry.getValue()) {
+                for (ReplacementUtils.BuilderReplacementSpec spec : entry.getValue()) {
                   if (collectedArgs.keySet().equals(spec.methodNamesToExtractParameters())) {
+
+                    spec.maybeRemoveImports().forEach(this::maybeRemoveImport);
+                    spec.maybeAddImports().forEach(this::maybeAddImport);
+
                     Object[] args =
-                        RecipeUtils.prependCamundaClient(
+                        ReplacementUtils.prependBaseIdentifier(
+                            spec.baseIdentifier(),
                             spec.extractedParametersToApply().stream()
                                 .map(collectedArgs::get)
                                 .toArray());
@@ -220,8 +379,7 @@ public abstract class AbstractMigrationRecipe extends Recipe {
               String returnTypeFqn = getCursor().getNearestMessage(currentSelect.getSimpleName());
 
               // loop through return replacement specs
-              for (RecipeUtils.MethodInvocationReturnReplacementSpec spec :
-                  returnMethodInvocations) {
+              for (ReplacementUtils.ReturnReplacementSpec spec : returnMethodInvocations) {
 
                 // matching old identifier and method invocation
                 if (spec.matcher().matches(invocation)) {
@@ -232,6 +390,9 @@ public abstract class AbstractMigrationRecipe extends Recipe {
                           currentSelect.getSimpleName(), returnTypeFqn);
 
                   maybeRemoveImport(currentFQN);
+
+                  spec.maybeAddImports().forEach(this::maybeAddImport);
+                  spec.maybeRemoveImports().forEach(this::maybeRemoveImport);
 
                   return maybeAutoFormat(
                       invocation,
@@ -244,6 +405,16 @@ public abstract class AbstractMigrationRecipe extends Recipe {
                               Collections.emptyList()),
                       ctx);
                 }
+              }
+            }
+
+            for (ReplacementUtils.RenameReplacementSpec spec : renameMethodInvocations()) {
+              if (spec.matcher().matches(invocation)) {
+                return super.visitMethodInvocation(
+                    invocation.withName(
+                        RecipeUtils.createSimpleIdentifier(
+                            spec.newSimpleName(), "java.lang.String")),
+                    ctx);
               }
             }
 

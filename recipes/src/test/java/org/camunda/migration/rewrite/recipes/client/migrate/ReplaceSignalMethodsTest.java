@@ -1,5 +1,6 @@
 package org.camunda.migration.rewrite.recipes.client.migrate;
 
+import org.camunda.migration.rewrite.recipes.client.MigrateSignalMethodsRecipe;
 import org.junit.jupiter.api.Test;
 import org.openrewrite.test.RewriteTest;
 
@@ -10,7 +11,7 @@ class ReplaceSignalMethodsTest implements RewriteTest {
     @Test
     void replaceSignalMethodsTest() {
     rewriteRun(
-        spec -> spec.recipe(new ReplaceSignalMethodsRecipe()),
+        spec -> spec.recipe(new MigrateSignalMethodsRecipe()),
         // language=java
         java(
             """
@@ -242,25 +243,16 @@ class ReplaceSignalMethodsTest implements RewriteTest {
                                         camundaClient
                                                 .newBroadcastSignalCommand()
                                                 .signalName(signalName)
-                                                .tenantId(tenantId)
                                                 .variables(variableMap)
+                                                .tenantId(tenantId)
                                                 .send()
                                                 .join();
 
                                         camundaClient
                                                 .newBroadcastSignalCommand()
                                                 .signalName(signalName)
-                                                .tenantId(tenantId)
                                                 .variables(variableMap)
-                                                .send()
-                                                .join();
-
-                                        // executionId was removed
-                                        camundaClient
-                                                .newBroadcastSignalCommand()
-                                                .signalName(signalName)
                                                 .tenantId(tenantId)
-                                                .variables(variableMap)
                                                 .send()
                                                 .join();
 
@@ -268,8 +260,8 @@ class ReplaceSignalMethodsTest implements RewriteTest {
                                         camundaClient
                                                 .newBroadcastSignalCommand()
                                                 .signalName(signalName)
-                                                .tenantId(tenantId)
                                                 .variables(variableMap)
+                                                .tenantId(tenantId)
                                                 .send()
                                                 .join();
 
@@ -277,8 +269,8 @@ class ReplaceSignalMethodsTest implements RewriteTest {
                                         camundaClient
                                                 .newBroadcastSignalCommand()
                                                 .signalName(signalName)
-                                                .tenantId(tenantId)
                                                 .variables(variableMap)
+                                                .tenantId(tenantId)
                                                 .send()
                                                 .join();
 
@@ -286,8 +278,8 @@ class ReplaceSignalMethodsTest implements RewriteTest {
                                         camundaClient
                                                 .newBroadcastSignalCommand()
                                                 .signalName(signalName)
-                                                .tenantId(tenantId)
                                                 .variables(variableMap)
+                                                .tenantId(tenantId)
                                                 .send()
                                                 .join();
 
@@ -295,8 +287,8 @@ class ReplaceSignalMethodsTest implements RewriteTest {
                                         camundaClient
                                                 .newBroadcastSignalCommand()
                                                 .signalName(signalName)
-                                                .tenantId(tenantId)
                                                 .variables(variableMap)
+                                                .tenantId(tenantId)
                                                 .send()
                                                 .join();
 
@@ -304,8 +296,17 @@ class ReplaceSignalMethodsTest implements RewriteTest {
                                         camundaClient
                                                 .newBroadcastSignalCommand()
                                                 .signalName(signalName)
-                                                .tenantId(tenantId)
                                                 .variables(variableMap)
+                                                .tenantId(tenantId)
+                                                .send()
+                                                .join();
+
+                                        // executionId was removed
+                                        camundaClient
+                                                .newBroadcastSignalCommand()
+                                                .signalName(signalName)
+                                                .variables(variableMap)
+                                                .tenantId(tenantId)
                                                 .send()
                                                 .join();
                                     }

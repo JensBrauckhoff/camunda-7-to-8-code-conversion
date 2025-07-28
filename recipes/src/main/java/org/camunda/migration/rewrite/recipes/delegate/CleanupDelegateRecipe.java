@@ -1,18 +1,17 @@
-package org.camunda.migration.rewrite.recipes.delegate.cleanup;
+package org.camunda.migration.rewrite.recipes.delegate;
 
 import java.util.List;
 import java.util.stream.Collectors;
-import org.camunda.migration.rewrite.recipes.utils.RecipeConstants;
 import org.openrewrite.*;
 import org.openrewrite.java.*;
 import org.openrewrite.java.search.UsesType;
 import org.openrewrite.java.tree.*;
 import org.openrewrite.jgit.annotations.NonNull;
 
-public class RemoveDelegateRecipe extends Recipe {
+public class CleanupDelegateRecipe extends Recipe {
 
   /** Instantiates a new instance. */
-  public RemoveDelegateRecipe() {}
+  public CleanupDelegateRecipe() {}
 
   @Override
   public String getDisplayName() {
@@ -29,11 +28,11 @@ public class RemoveDelegateRecipe extends Recipe {
 
     // define preconditions
     TreeVisitor<?, ExecutionContext> check =
-        new UsesType<>(RecipeConstants.Type.JAVA_DELEGATE, true);
+        new UsesType<>("org.camunda.bpm.engine.delegate.JavaDelegate", true);
 
     return Preconditions.check(
         check,
-        new JavaIsoVisitor<ExecutionContext>() {
+        new JavaIsoVisitor<>() {
 
           @Override
           @NonNull
@@ -51,7 +50,7 @@ public class RemoveDelegateRecipe extends Recipe {
                     .filter(
                         id ->
                             !TypeUtils.isOfClassType(
-                                id.getType(), RecipeConstants.Type.JAVA_DELEGATE))
+                                id.getType(), "org.camunda.bpm.engine.delegate.JavaDelegate"))
                     .collect(Collectors.toList());
 
             List<Statement> filteredStatements =
@@ -62,8 +61,8 @@ public class RemoveDelegateRecipe extends Recipe {
                                 && methDecl.getSimpleName().equals("execute"))))
                     .toList();
 
-            maybeRemoveImport(RecipeConstants.Type.JAVA_DELEGATE);
-            maybeRemoveImport(RecipeConstants.Type.DELEGATE_EXECUTION);
+            maybeRemoveImport("org.camunda.bpm.engine.delegate.JavaDelegate");
+            maybeRemoveImport("org.camunda.bpm.engine.delegate.DelegateExecution");
 
             return classDecl
                 .withBody(classDecl.getBody().withStatements(filteredStatements))
